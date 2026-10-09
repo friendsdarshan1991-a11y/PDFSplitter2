@@ -1,8 +1,5 @@
-# Required installs:
-# pip install streamlit PyPDF2
-
 import streamlit as st
-from pypdf import PdfReader, PdfWriter
+import fitz  # PyMuPDF
 import io
 import zipfile
 
@@ -10,67 +7,106 @@ st.set_page_config(page_title="PDF Splitter", layout="centered")
 
 st.title("📄 PDF Splitter by Size")
 
-# Upload
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-# Unit selection
 unit = st.selectbox("Select Size Unit", ["MB", "KB"])
 
-# Dynamic input based on unit
 if unit == "MB":
-    size = st.number_input("Max size per file (MB)", min_value=1, value=25)
+    size = st.number_input(
+        "Max size per file (MB)",
+        min_value=1,
+        value=25
+    )
     max_size_bytes = size * 1024 * 1024
 else:
-    size = st.number_input("Max size per file (KB)", min_value=1, value=25000)
+    size = st.number_input(
+        "Max size per file (KB)",
+        min_value=1,
+        value=25000
+    )
     max_size_bytes = size * 1024
 
-# Button
-if uploaded_file is not None:
-    if st.button("🚀 Split PDF"):
+if uploaded_file and st.button("🚀 Split PDF"):
 
-        reader = PdfReader(uploaded_file)
+    pdf_bytes = uploaded_file.read()
+    src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-        writer = PdfWriter()
-        part_num = 1
+    zip_buffer = io.BytesIO()
 
-        zip_buffer = io.BytesIO()
-        zip_file = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED)
+    progress = st.progress(0)
+    total_pages = len(src_doc)
 
-        progress = st.progress(0)
-        total_pages = len(reader.pages)
+    with zipfile.ZipFile(
+        zip_buffer,
+        "w",
+        compression=zipfile.ZIP_DEFLATED
+    ) as zip_file:
 
-        for i, page in enumerate(reader.pages):
-            writer.add_page(page)
+        current_doc = fitz.open()
+        part_no = 1
 
-            temp_buffer = io.BytesIO()
-            writer.write(temp_buffer)
+        for page_num in range(total_pages):
 
-            # Size check
-            if temp_buffer.tell() >= max_size_bytes:
-                file_name = f"part_{part_num}.pdf"
-                zip_file.writestr(file_name, temp_buffer.getvalue())
+            current_doc.insert_pdf(
+                src_doc,
+                from_page=page_num,
+                to_page=page_num
+            )
 
-                part_num += 1
-                writer = PdfWriter()
+            current_bytes = current_doc.tobytes(
+                garbage=3,
+                deflate=True
+            )
 
-            # Update progress
-            progress.progress((i + 1) / total_pages)
+            if len(current_bytes) > max_size_bytes:
 
-        # Save remaining pages
-        if len(writer.pages) > 0:
-            temp_buffer = io.BytesIO()
-            writer.write(temp_buffer)
-            file_name = f"part_{part_num}.pdf"
-            zip_file.writestr(file_name, temp_buffer.getvalue())
+                current_doc.delete_page(
+                    len(current_doc) - 1
+                )
 
-        zip_file.close()
+                split_bytes = current_doc.tobytes(
+                    garbage=3,
+                    deflate=True
+                )
 
-        st.success("✅ PDF Split Successfully!")
+                zip_file.writestr(
+                    f"part_{part_no}.pdf",
+                    split_bytes
+                )
 
-        # Download
-        st.download_button(
-            label="⬇️ Download Split PDFs (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name="split_pdfs.zip",
-            mime="application/zip"
-        )
+                part_no += 1
+
+                current_doc.close()
+                current_doc = fitz.open()
+
+                current_doc.insert_pdf(
+                    src_doc,
+                    from_page=page_num,
+                    to_page=page_num
+                )
+
+            progress.progress(
+                (page_num + 1) / total_pages
+            )
+
+        if len(current_doc) > 0:
+            zip_file.writestr(
+                f"part_{part_no}.pdf",
+                current_doc.tobytes(
+                    garbage=3,
+                    deflate=True
+                )
+            )
+
+        current_doc.close()
+
+    src_doc.close()
+
+    st.success("✅ PDF Split Successfully!")
+
+    st.download_button(
+        label="⬇️ Download Split PDFs (ZIP)",
+        data=zip_buffer.getvalue(),
+        file_name="split_pdfs.zip",
+        mime="application/zip",
+    )
