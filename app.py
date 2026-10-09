@@ -67,7 +67,7 @@ if uploaded_file is not None:
 
                     # Check size only every 10 pages
                     should_check = (
-                        (page_index + 1) % 10 == 0
+                        (page_index + 1) % 20 == 0
                         or page_index == total_pages - 1
                     )
 
